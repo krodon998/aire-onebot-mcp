@@ -1,0 +1,6 @@
+{
+  "version_code": 2,
+  "version_name": "0.2.0",
+  "download_url": "https://github.com/krodon998/aire-onebot-mcp/releases/download/aire-control-latest/AireControl-latest.apk",
+  "notes": "新增应用内检查更新、同步控制脚本；继续保留一键恢复、Heartbeat、RikkaHub 会话和 QQ 群白名单控制。"
+}
