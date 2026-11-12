@@ -40,11 +40,11 @@ AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN", "change_me_to_a_secure_random_token")
 # 新名称使用 ONEBOT_*；旧 SNOWLUMA_* 作为兼容别名保留。
 ONEBOT_API_BASE = os.getenv(
     "ONEBOT_API_BASE",
-    os.getenv("ONEBOT_API_BASE", "http://127.0.0.1:3000"),
+    os.getenv("SNOWLUMA_API_BASE", "http://127.0.0.1:3000"),
 ).rstrip("/")
 ONEBOT_API_TOKEN = os.getenv(
     "ONEBOT_API_TOKEN",
-    os.getenv("ONEBOT_API_TOKEN", ""),
+    os.getenv("SNOWLUMA_API_TOKEN", ""),
 )
 TIMEOUT = float(os.getenv(
     "ONEBOT_TIMEOUT",
@@ -1367,9 +1367,9 @@ def build_onebot_mcp() -> FastMCP:
     # 允许反向代理穿透与公网域名 Host
     security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
     mcp = FastMCP(
-        name="SnowLuma",
+        name="AireOneBot",
         instructions=(
-            "SnowLuma QQ 机器人控制网关。支持收发群聊与私聊消息（支持@群友和引用回复）、查看群聊与私聊历史、智能解析合并转发聊天记录、"
+            "OneBot v11 QQ 控制网关。支持收发群聊与私聊消息（支持@群友和引用回复）、查看群聊与私聊历史、智能解析合并转发聊天记录、"
             "贴表情反应（Reaction）、管理群成员，以及通过 call_onebot_action 透传调用底层 170+ 个 OneBot v11 原生动作。"
             "历史记录里的媒体以占位呈现：[图片] 普通图片、[动画表情] 动图表情、[表情包:名字] 商城表情。"
         ),
