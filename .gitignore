@@ -5,3 +5,6 @@ venv/
 .venv/
 .env
 config.env
+airectl.json
+qq_watch_state.json
+rikkahub-heartbeat/
