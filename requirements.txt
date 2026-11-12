@@ -1,5 +1,6 @@
-mcp>=1.29.0
+mcp>=1.29.0,<2
 httpx>=0.28.0
 uvicorn>=0.30.0
 starlette>=0.40.0
 pillow>=11.3.0
+python-dotenv>=1.0.0
