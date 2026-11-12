@@ -3,6 +3,7 @@ package com.aire.control;
 import android.Manifest;
 import android.app.Activity;
 import android.app.PendingIntent;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -27,12 +28,19 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends Activity {
     private static final String TERMUX_PACKAGE = "com.termux";
     private static final String RUN_PERMISSION = "com.termux.permission.RUN_COMMAND";
     private static final int REQ_TERMUX = 41;
+    private static final String UPDATE_MANIFEST = "https://raw.githubusercontent.com/krodon998/aire-onebot-mcp/main/android/AireControl/latest.json";
     private static final AtomicInteger EXEC_ID = new AtomicInteger(1000);
 
     private TextView output;
@@ -99,7 +107,16 @@ public class MainActivity extends Activity {
         root.addView(title);
         TextView subtitle = text("RikkaHub · Heartbeat · QQ/NapCat · AireOneBot", 13, false);
         subtitle.setTextColor(Color.DKGRAY);
-        root.addView(subtitle, lp(0, 0, 0, 14));
+        root.addView(subtitle, lp(0, 0, 0, 6));
+
+        TextView version = text("v" + BuildConfig.VERSION_NAME, 12, false);
+        version.setTextColor(Color.GRAY);
+        root.addView(version, lp(0, 0, 0, 8));
+
+        LinearLayout updateRow = row();
+        updateRow.addView(button("检查更新", v -> checkForUpdates()), weight());
+        updateRow.addView(button("同步控制脚本", v -> syncScripts()), weight());
+        root.addView(updateRow, lp(0, 0, 0, 14));
 
         TextView notice = text(
                 "第一次使用：Termux 需要 allow-external-apps=true，并给本 App 授予「Run commands in Termux environment」。之后大部分操作都可以只在这里点。",
@@ -183,6 +200,60 @@ public class MainActivity extends Activity {
         }), lp(0, 8, 0, 0));
 
         return scroll;
+    }
+
+    private void syncScripts() {
+        String cmd = "cd /opt/aire-onebot-mcp && git remote set-url origin https://github.com/krodon998/aire-onebot-mcp.git && git pull --ff-only";
+        runUbuntu(cmd, "sync scripts");
+    }
+
+    private void checkForUpdates() {
+        output.setText("[update] 检查中…");
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(UPDATE_MANIFEST + "?t=" + System.currentTimeMillis());
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.setRequestProperty("Cache-Control", "no-cache");
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                    StringBuilder body = new StringBuilder();
+                    String line;
+                    while ((line = br.readLine()) != null) body.append(line);
+                    JSONObject j = new JSONObject(body.toString());
+                    int latestCode = j.getInt("version_code");
+                    String latestName = j.optString("version_name", "?");
+                    String downloadUrl = j.optString("download_url", "");
+                    String notes = j.optString("notes", "");
+
+                    runOnUiThread(() -> {
+                        output.setText("[update]\n当前 v" + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")" +
+                                "\n最新 v" + latestName + " (" + latestCode + ")");
+                        if (latestCode > BuildConfig.VERSION_CODE) {
+                            new AlertDialog.Builder(this)
+                                    .setTitle("发现 Aire Control v" + latestName)
+                                    .setMessage(notes.isBlank() ? "有新版本可用。" : notes)
+                                    .setNegativeButton("稍后", null)
+                                    .setPositiveButton("下载更新", (d, w) -> {
+                                        if (!downloadUrl.isBlank()) openUrl(downloadUrl);
+                                    })
+                                    .show();
+                        } else {
+                            new AlertDialog.Builder(this)
+                                    .setTitle("已经是最新版")
+                                    .setMessage("当前版本：v" + BuildConfig.VERSION_NAME)
+                                    .setPositiveButton("好", null)
+                                    .show();
+                        }
+                    });
+                }
+            } catch (Exception e) {
+                runOnUiThread(() -> output.setText("[update] 检查失败\n" + e.getClass().getSimpleName() + ": " + e.getMessage()));
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
     }
 
     private void applyHeartbeat() {
