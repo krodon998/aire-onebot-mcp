@@ -11,7 +11,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -40,3 +40,17 @@ jobs:
           name: AireControl-debug
           path: android/AireControl/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Publish rolling APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/AireControl/app/build/outputs/apk/debug/app-debug.apk AireControl-latest.apk
+          if gh release view aire-control-latest >/dev/null 2>&1; then
+            gh release upload aire-control-latest AireControl-latest.apk --clobber
+          else
+            gh release create aire-control-latest AireControl-latest.apk \
+              --title "Aire Control latest" \
+              --notes "Rolling debug build of Aire Control." \
+              --prerelease
+          fi
