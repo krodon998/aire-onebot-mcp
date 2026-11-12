@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-SnowLuma Remote MCP Server (Streamable HTTP / SSE)
-Designed for RikkaHub Android Agent & Claude MCP Protocol.
-Directly communicates with SnowLuma OneBot v11 HTTP API on localhost:3000.
+Aire OneBot Remote MCP Server (Streamable HTTP / SSE)
+Designed for RikkaHub Android agents and remote MCP clients.
+Communicates with any compatible OneBot v11 HTTP implementation (tested with NapCat).
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 import httpx
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import TextContent
@@ -28,17 +29,31 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 
 # 配置与环境变量
+# 自动读取本地配置；显式环境变量优先于文件值。
+load_dotenv(".env", override=False)
+load_dotenv("config.env", override=False)
+
 HOST = os.getenv("MCP_HOST", "127.0.0.1")
 PORT = int(os.getenv("MCP_PORT", "8766"))
 AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN", "change_me_to_a_secure_random_token")
 
-SNOWLUMA_API_BASE = os.getenv("SNOWLUMA_API_BASE", "http://127.0.0.1:3000").rstrip("/")
-SNOWLUMA_API_TOKEN = os.getenv("SNOWLUMA_API_TOKEN", "")
-TIMEOUT = float(os.getenv("SNOWLUMA_TIMEOUT", "30.0"))
+# 新名称使用 ONEBOT_*；旧 SNOWLUMA_* 作为兼容别名保留。
+ONEBOT_API_BASE = os.getenv(
+    "ONEBOT_API_BASE",
+    os.getenv("ONEBOT_API_BASE", "http://127.0.0.1:3000"),
+).rstrip("/")
+ONEBOT_API_TOKEN = os.getenv(
+    "ONEBOT_API_TOKEN",
+    os.getenv("ONEBOT_API_TOKEN", ""),
+)
+TIMEOUT = float(os.getenv(
+    "ONEBOT_TIMEOUT",
+    os.getenv("SNOWLUMA_TIMEOUT", "30.0"),
+))
 
 # 模块级 logger：set_msg_emoji_like 里原本直接用了 logger.warning 却没定义，
 # 一触发 warning 就 NameError，把「表情其实已经贴成功」的一次调用报成失败。
-logger = logging.getLogger("snowluma-mcp")
+logger = logging.getLogger("aire-onebot-mcp")
 
 _http_client: httpx.AsyncClient | None = None
 
@@ -523,8 +538,8 @@ async def get_http_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
         headers = {"Content-Type": "application/json"}
-        if SNOWLUMA_API_TOKEN:
-            headers["Authorization"] = f"Bearer {SNOWLUMA_API_TOKEN}"
+        if ONEBOT_API_TOKEN:
+            headers["Authorization"] = f"Bearer {ONEBOT_API_TOKEN}"
         _http_client = httpx.AsyncClient(timeout=TIMEOUT, headers=headers)
     return _http_client
 
@@ -536,14 +551,14 @@ async def close_http_client() -> None:
     _http_client = None
 
 
-async def call_snowluma(action: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """向 SnowLuma OneBot HTTP API 发送动作请求"""
+async def call_onebot(action: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """向上游 OneBot v11 HTTP API 发送动作请求"""
     client = await get_http_client()
-    url = f"{SNOWLUMA_API_BASE}/{action.lstrip('/')}"
+    url = f"{ONEBOT_API_BASE}/{action.lstrip('/')}"
     try:
         resp = await client.post(url, json=params or {})
         if resp.status_code in (401, 403):
-            return {"ok": False, "retcode": resp.status_code, "error": "SnowLuma OneBot API 认证失败（Token 错误）"}
+            return {"ok": False, "retcode": resp.status_code, "error": "OneBot HTTP API 认证失败（Token 错误）"}
         if resp.status_code >= 400:
             return {"ok": False, "retcode": resp.status_code, "error": f"HTTP {resp.status_code}: {resp.text}"}
         data = resp.json()
@@ -557,7 +572,7 @@ async def call_snowluma(action: str, params: dict[str, Any] | None = None) -> di
             "data": data.get("data"),
         }
     except Exception as exc:
-        return {"ok": False, "error": f"请求 SnowLuma 异常: {type(exc).__name__} ({str(exc)})"}
+        return {"ok": False, "error": f"请求 OneBot 上游异常: {type(exc).__name__} ({str(exc)})"}
 
 
 # 引用回复片段的最大字符数（超出部分截断为 …）
@@ -583,7 +598,7 @@ def _reply_snippet(text: str, limit: int = REPLY_SNIPPET_LENGTH) -> str:
 
 # ---------------- 媒体段（图片 / 动画表情 / 商城表情） ----------------
 #
-# SnowLuma（NTQQ）不会发 mface 段：QQ 的所有媒体都落在 type=image 里，靠 sub_type
+# 当前实测的 NTQQ OneBot 上游（NapCat 等）常把 QQ 媒体放在 type=image 里，靠 sub_type
 # 和 emoji_id 区分。实测分布：
 #   sub_type=0，无 emoji_id                  → 普通图片（summary 恒为 [图片]）
 #   sub_type=0，带 emoji_id/emoji_package_id → 老式商城表情，url 在 gxh.vip.qq.com，summary 是表情名
@@ -789,7 +804,7 @@ async def fetch_media_bytes(seg: dict[str, Any]) -> tuple[bytes, str]:
         except ImageUnavailable as exc:
             notes.append(f"原链接 {exc}")
     if file_id:
-        resigned = await call_snowluma("get_image", {"file": file_id})
+        resigned = await call_onebot("get_image", {"file": file_id})
         if resigned.get("ok"):
             data = resigned.get("data") or {}
             fresh = str(data.get("url") or data.get("file") or "").strip()
@@ -1236,7 +1251,7 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
                 "Unauthorized: invalid or missing Bearer token",
                 status_code=401,
                 media_type="text/plain",
-                headers={"WWW-Authenticate": 'Bearer realm="snowluma-mcp"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aire-onebot-mcp"'},
             )
 
         return await call_next(request)
@@ -1273,7 +1288,7 @@ _FORWARD_FAILURES: dict[str, tuple[str, str]] = {
     ),
 }
 
-_UPSTREAM_HINT = "上游异常，可原样重试一次；持续失败请查 SnowLuma 日志。"
+_UPSTREAM_HINT = "上游异常，可原样重试一次；持续失败请查 OneBot 上游日志。"
 
 
 def normalize_forward_id(raw: Any) -> str:
@@ -1348,7 +1363,7 @@ def reject_bad_format(fmt: Any) -> dict[str, Any] | None:
     }
 
 
-def build_snowluma_mcp() -> FastMCP:
+def build_onebot_mcp() -> FastMCP:
     # 允许反向代理穿透与公网域名 Host
     security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
     mcp = FastMCP(
@@ -1367,7 +1382,7 @@ def build_snowluma_mcp() -> FastMCP:
     @mcp.tool()
     async def send_private_msg(user_id: int, message: str, auto_escape: bool = False) -> dict[str, Any]:
         """向指定 QQ 用户发送私聊消息。支持纯文本或 CQ 码。"""
-        return await call_snowluma("send_private_msg", {
+        return await call_onebot("send_private_msg", {
             "user_id": int(user_id),
             "message": message,
             "auto_escape": bool(auto_escape),
@@ -1394,7 +1409,7 @@ def build_snowluma_mcp() -> FastMCP:
         if reply_to_message_id and not auto_escape and "[CQ:reply" not in message:
             final_msg = f"[CQ:reply,id={int(reply_to_message_id)}]{final_msg}"
 
-        return await call_snowluma("send_group_msg", {
+        return await call_onebot("send_group_msg", {
             "group_id": int(group_id),
             "message": final_msg,
             "auto_escape": bool(auto_escape),
@@ -1418,17 +1433,17 @@ def build_snowluma_mcp() -> FastMCP:
             params["group_id"] = int(group_id)
         elif message_type == "private" and user_id:
             params["user_id"] = int(user_id)
-        return await call_snowluma("send_msg", params)
+        return await call_onebot("send_msg", params)
 
     @mcp.tool()
     async def delete_msg(message_id: int) -> dict[str, Any]:
         """撤回指定的消息（需在撤回时限内且具备管理员权限或为自身发送）。"""
-        return await call_snowluma("delete_msg", {"message_id": int(message_id)})
+        return await call_onebot("delete_msg", {"message_id": int(message_id)})
 
     @mcp.tool()
     async def get_msg(message_id: int) -> dict[str, Any]:
         """根据消息 ID 获取单条消息的具体内容与发送者详情。"""
-        return await call_snowluma("get_msg", {"message_id": int(message_id)})
+        return await call_onebot("get_msg", {"message_id": int(message_id)})
 
     if VIEW_IMAGE_ENABLED:
 
@@ -1466,7 +1481,7 @@ def build_snowluma_mcp() -> FastMCP:
             if fid:
                 # 转发包里的 message_id 是另一个 ID 空间，get_msg 一律 message not found；
                 # 好在转发包本身就把 url/file 带回来了，不用二次查询。
-                forwarded = await call_snowluma("get_forward_msg", {"id": fid})
+                forwarded = await call_onebot("get_forward_msg", {"id": fid})
                 if not forwarded.get("ok"):
                     return [TextContent(type="text", text=json.dumps(
                         explain_forward_failure(fid, forwarded), ensure_ascii=False))]
@@ -1490,7 +1505,7 @@ def build_snowluma_mcp() -> FastMCP:
                 data = target
                 scope = "forward"
             else:
-                detail = await call_snowluma("get_msg", {"message_id": int(message_id)})
+                detail = await call_onebot("get_msg", {"message_id": int(message_id)})
                 if not detail.get("ok"):
                     err = str(detail.get("error") or "")
                     hint = ("；如果这条消息是从合并转发里读到的，请带上 forward_id 再调用"
@@ -1603,7 +1618,7 @@ def build_snowluma_mcp() -> FastMCP:
         params: dict[str, Any] = {"group_id": int(group_id), "count": min(max(int(count), 1), 100)}
         if message_seq is not None:
             params["message_seq"] = int(message_seq)
-        res = await call_snowluma("get_group_msg_history", params)
+        res = await call_onebot("get_group_msg_history", params)
         if not res.get("ok"):
             return res
 
@@ -1656,7 +1671,7 @@ def build_snowluma_mcp() -> FastMCP:
         params: dict[str, Any] = {"user_id": int(user_id), "count": min(max(int(count), 1), 100)}
         if message_seq is not None:
             params["message_seq"] = int(message_seq)
-        res = await call_snowluma("get_friend_msg_history", params)
+        res = await call_onebot("get_friend_msg_history", params)
         if not res.get("ok"):
             return res
 
@@ -1708,7 +1723,7 @@ def build_snowluma_mcp() -> FastMCP:
         if bad_format:
             return bad_format
 
-        res = await call_snowluma("get_forward_msg", {"id": clean_id})
+        res = await call_onebot("get_forward_msg", {"id": clean_id})
         if not res.get("ok"):
             return explain_forward_failure(clean_id, res)
 
@@ -1754,7 +1769,7 @@ def build_snowluma_mcp() -> FastMCP:
                 "data": None,
             }
 
-        res = await call_snowluma("set_msg_emoji_like", {
+        res = await call_onebot("set_msg_emoji_like", {
             "message_id": int(message_id),
             "emoji_id": emoji_id,
             "set": True,
@@ -1792,27 +1807,27 @@ def build_snowluma_mcp() -> FastMCP:
     @mcp.tool()
     async def get_login_info() -> dict[str, Any]:
         """获取当前机器人的 QQ 号与昵称信息。"""
-        return await call_snowluma("get_login_info")
+        return await call_onebot("get_login_info")
 
     @mcp.tool()
     async def get_status() -> dict[str, Any]:
         """获取机器人当前运行状态、在线情况与连接状态。"""
-        return await call_snowluma("get_status")
+        return await call_onebot("get_status")
 
     @mcp.tool()
     async def get_friend_list() -> dict[str, Any]:
         """获取机器人的好友列表。"""
-        return await call_snowluma("get_friend_list")
+        return await call_onebot("get_friend_list")
 
     @mcp.tool()
     async def get_group_list() -> dict[str, Any]:
         """获取机器人已加入的 QQ 群聊列表。"""
-        return await call_snowluma("get_group_list")
+        return await call_onebot("get_group_list")
 
     @mcp.tool()
     async def get_group_info(group_id: int, no_cache: bool = False) -> dict[str, Any]:
         """获取指定群的详细资料（群名、成员数、最大容量等）。"""
-        return await call_snowluma("get_group_info", {
+        return await call_onebot("get_group_info", {
             "group_id": int(group_id),
             "no_cache": bool(no_cache),
         })
@@ -1820,7 +1835,7 @@ def build_snowluma_mcp() -> FastMCP:
     @mcp.tool()
     async def get_group_member_list(group_id: int, no_cache: bool = False) -> dict[str, Any]:
         """获取指定群的完整成员列表。"""
-        return await call_snowluma("get_group_member_list", {
+        return await call_onebot("get_group_member_list", {
             "group_id": int(group_id),
             "no_cache": bool(no_cache),
         })
@@ -1830,7 +1845,7 @@ def build_snowluma_mcp() -> FastMCP:
     @mcp.tool()
     async def set_group_ban(group_id: int, user_id: int, duration: int = 1800) -> dict[str, Any]:
         """禁言群成员。duration 为禁言秒数，传 0 表示解除禁言。"""
-        return await call_snowluma("set_group_ban", {
+        return await call_onebot("set_group_ban", {
             "group_id": int(group_id),
             "user_id": int(user_id),
             "duration": int(duration),
@@ -1839,7 +1854,7 @@ def build_snowluma_mcp() -> FastMCP:
     @mcp.tool()
     async def set_group_card(group_id: int, user_id: int, card: str) -> dict[str, Any]:
         """修改指定群成员的名片（群昵称）。"""
-        return await call_snowluma("set_group_card", {
+        return await call_onebot("set_group_card", {
             "group_id": int(group_id),
             "user_id": int(user_id),
             "card": card,
@@ -1848,7 +1863,7 @@ def build_snowluma_mcp() -> FastMCP:
     @mcp.tool()
     async def set_group_kick(group_id: int, user_id: int, reject_add_request: bool = False) -> dict[str, Any]:
         """将成员移出群聊。"""
-        return await call_snowluma("set_group_kick", {
+        return await call_onebot("set_group_kick", {
             "group_id": int(group_id),
             "user_id": int(user_id),
             "reject_add_request": bool(reject_add_request),
@@ -1858,26 +1873,26 @@ def build_snowluma_mcp() -> FastMCP:
 
     @mcp.tool()
     async def call_onebot_action(action: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """全能动作透传接口：直接调用 SnowLuma 底层 170+ 个 OneBot v11 原生动作。用于执行上述预设工具未直接暴露的高级指令。"""
-        return await call_snowluma(action, params or {})
+        """全能动作透传接口：直接调用上游 OneBot v11 原生动作。用于执行上述预设工具未直接暴露的高级指令。"""
+        return await call_onebot(action, params or {})
 
     return mcp
 
 
 def create_asgi_app() -> Starlette:
     """构建包含鉴权中间件与健康路由的 Starlette ASGI 实例"""
-    mcp = build_snowluma_mcp()
+    mcp = build_onebot_mcp()
     app = mcp.streamable_http_app()
 
     # 注册健康检查路由
     async def health_endpoint(request: Any) -> Response:
-        status_res = await call_snowluma("get_status")
-        login_res = await call_snowluma("get_login_info")
+        status_res = await call_onebot("get_status")
+        login_res = await call_onebot("get_login_info")
         return JSONResponse({
-            "service": "snowluma-mcp",
+            "service": "aire-onebot-mcp",
             "version": "1.3.2",
             "status": "online",
-            "snowluma_onebot": {
+            "onebot": {
                 "alive": status_res.get("ok", False),
                 "bot_qq": login_res.get("data", {}).get("user_id"),
                 "bot_nickname": login_res.get("data", {}).get("nickname"),
@@ -1903,7 +1918,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
-    print(f"[SnowLuma MCP] Starting on {HOST}:{PORT}, target OneBot: {SNOWLUMA_API_BASE}")
+    print(f"[Aire OneBot MCP] Starting on {HOST}:{PORT}, target OneBot: {ONEBOT_API_BASE}")
     asgi_app = create_asgi_app()
     uvicorn.run(asgi_app, host=HOST, port=PORT, log_level="info")
 
