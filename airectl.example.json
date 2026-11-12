@@ -1,0 +1,13 @@
+{
+  "rikkahub_base": "http://127.0.0.1:8080",
+  "onebot_base": "http://127.0.0.1:3000",
+  "mcp_health": "http://127.0.0.1:8766/health",
+  "heartbeat_dir": "rikkahub-heartbeat",
+  "display": ":1",
+  "novnc_port": 6080,
+  "vnc_port": 5901,
+  "watch_enabled": false,
+  "watch_groups": [],
+  "group_poll_seconds": 15,
+  "group_wake_cooldown_seconds": 120
+}
