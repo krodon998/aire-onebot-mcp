@@ -203,7 +203,32 @@ public class MainActivity extends Activity {
     }
 
     private void syncScripts() {
-        String cmd = "cd /opt/aire-onebot-mcp && git remote set-url origin https://github.com/krodon998/aire-onebot-mcp.git && git pull --ff-only";
+        String cmd =
+                "cd /opt/aire-onebot-mcp && python3 - <<'PY'\n" +
+                "from pathlib import Path\n" +
+                "from urllib.request import Request, urlopen\n" +
+                "import os, time\n" +
+                "base='https://raw.githubusercontent.com/krodon998/aire-onebot-mcp/main/'\n" +
+                "files=['airectl.py','qq_watch.py','MOBILE_TOOLKIT_zh.md']\n" +
+                "for name in files:\n" +
+                "    last=None\n" +
+                "    for attempt in range(3):\n" +
+                "        try:\n" +
+                "            req=Request(base+name, headers={'User-Agent':'AireControl/0.3'})\n" +
+                "            data=urlopen(req, timeout=12).read()\n" +
+                "            if not data:\n" +
+                "                raise RuntimeError('empty download')\n" +
+                "            tmp=Path(name+'.tmp')\n" +
+                "            tmp.write_bytes(data)\n" +
+                "            os.replace(tmp, Path(name))\n" +
+                "            print(name+': updated')\n" +
+                "            break\n" +
+                "        except Exception as e:\n" +
+                "            last=e\n" +
+                "            if attempt == 2:\n" +
+                "                raise\n" +
+                "            time.sleep(1.2*(attempt+1))\n" +
+                "PY";
         runUbuntu(cmd, "sync scripts");
     }
 
