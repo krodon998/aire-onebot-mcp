@@ -1,0 +1,18 @@
+[Unit]
+Description=Aire OneBot Remote MCP Server (Streamable HTTP)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=<INSTALL_DIR>
+EnvironmentFile=-<INSTALL_DIR>/config.env
+ExecStart=<INSTALL_DIR>/venv/bin/python <INSTALL_DIR>/server.py
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=10
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
