@@ -12,6 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - uses: actions/checkout@v4
@@ -21,11 +24,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Locate Android SDK manager
+        id: sdk
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' | sort -V | tail -1)
+          test -x "$SDKMANAGER"
+          echo "sdkmanager=$SDKMANAGER" >> "$GITHUB_OUTPUT"
+
       - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses >/dev/null || true
+        run: yes | "${{ steps.sdk.outputs.sdkmanager }}" --licenses >/dev/null || true
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: "${{ steps.sdk.outputs.sdkmanager }}" "platforms;android-35" "build-tools;35.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
