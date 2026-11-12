@@ -475,10 +475,13 @@ def cmd_groups_watch(args: argparse.Namespace) -> int:
     c["watch_groups"] = selected
     c["watch_enabled"] = True
     save_config(c)
+    stop_watcher()
+    time.sleep(0.3)
+    ensure_watcher(c)
     print("watch groups replaced with:")
     for g in selected:
         print(f"  {g['group_name']} ({g['group_id']})")
-    print("run python3 airectl.py watcher restart to apply immediately")
+    print("watcher: " + ("running" if running("qq_watch.py --run") else "stopped"))
     return 0
 
 
@@ -487,7 +490,8 @@ def cmd_groups_clear(_: argparse.Namespace) -> int:
     c["watch_groups"] = []
     c["watch_enabled"] = False
     save_config(c)
-    print("group watch disabled; allowlist cleared")
+    stop_watcher()
+    print("group watch disabled; allowlist cleared; watcher stopped")
     return 0
 
 
