@@ -1,5 +1,9 @@
 name: Build Aire Control APK
 
+concurrency:
+  group: aire-control-apk
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:
