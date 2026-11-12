@@ -732,8 +732,7 @@ class ImageUnavailable(Exception):
 def collect_media_segments(message: Any) -> list[dict[str, Any]]:
     """从一个 OneBot message（段数组或 CQ 字符串）里挑出所有 image/mface 段。
 
-    段数组和 CQ 字符串两种形态都要兜：前者是 SnowLuma 的实际输出，后者是别的
-    OneBot 实现的配置。
+    段数组和 CQ 字符串两种形态都要兜：不同 OneBot 实现可能返回不同消息形态。
     """
     media: list[dict[str, Any]] = []
     if isinstance(message, list):
@@ -1890,7 +1889,7 @@ def create_asgi_app() -> Starlette:
         login_res = await call_onebot("get_login_info")
         return JSONResponse({
             "service": "aire-onebot-mcp",
-            "version": "1.3.2",
+            "version": "2.0.0",
             "status": "online",
             "onebot": {
                 "alive": status_res.get("ok", False),
