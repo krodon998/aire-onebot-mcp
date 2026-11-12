@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -105,6 +106,26 @@ def probe(url: str, timeout: float = 1.5) -> tuple[bool, int | None]:
         return True, code
     except Exception:
         return False, None
+
+
+def tcp_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def kill_matching(needle: str) -> None:
+    for line in ps_lines():
+        parts = line.strip().split(None, 1)
+        if len(parts) < 2:
+            continue
+        if needle in parts[1]:
+            try:
+                os.kill(int(parts[0]), 15)
+            except Exception:
+                pass
 
 
 def onebot(action: str, params: dict[str, Any] | None = None) -> Any:
@@ -242,6 +263,8 @@ def ensure_x_stack(c: dict[str, Any]) -> None:
     display = str(c["display"])
     env = os.environ.copy()
     env["DISPLAY"] = display
+
+    # X server must actually be usable, not merely have a stale process/lock.
     if not running(f"Xvfb {display}"):
         if display == ":1":
             for p in [Path("/tmp/.X1-lock"), Path("/tmp/.X11-unix/X1")]:
@@ -252,14 +275,55 @@ def ensure_x_stack(c: dict[str, Any]) -> None:
                 except IsADirectoryError:
                     shutil.rmtree(p, ignore_errors=True)
         detached(["Xvfb", display, "-screen", "0", "1280x720x24", "-nolisten", "tcp"], Path("/tmp/xvfb.log"), env=env)
-        time.sleep(1)
+
+    x_socket = Path("/tmp/.X11-unix/X1") if display == ":1" else None
+    for _ in range(20):
+        if running(f"Xvfb {display}") and (x_socket is None or x_socket.exists()):
+            break
+        time.sleep(0.1)
+
+    if not running(f"Xvfb {display}") or (x_socket is not None and not x_socket.exists()):
+        raise RuntimeError("Xvfb failed to become ready; see /tmp/xvfb.log")
+
     if not running("openbox"):
         detached(["dbus-launch", "openbox-session"], Path("/tmp/openbox.log"), env=env)
-    if not running("x11vnc -display"):
-        detached(["x11vnc", "-display", display, "-localhost", "-nopw", "-forever", "-shared", "-rfbport", str(c["vnc_port"])], Path("/tmp/x11vnc.log"), env=env)
-    if not running("websockify --web=/usr/share/novnc"):
-        detached(["websockify", "--web=/usr/share/novnc", f"127.0.0.1:{c['novnc_port']}", f"127.0.0.1:{c['vnc_port']}"], Path("/tmp/novnc.log"), env=env)
 
+    # x11vnc is the actual VNC backend. If 5901 is not listening, restart it.
+    if not tcp_open("127.0.0.1", int(c["vnc_port"]), 0.4):
+        kill_matching("x11vnc -display")
+        time.sleep(0.2)
+        detached(
+            ["x11vnc", "-display", display, "-localhost", "-nopw", "-forever", "-shared",
+             "-rfbport", str(c["vnc_port"])],
+            Path("/tmp/x11vnc.log"),
+            env=env,
+        )
+        for _ in range(20):
+            if tcp_open("127.0.0.1", int(c["vnc_port"]), 0.3):
+                break
+            time.sleep(0.1)
+
+    if not tcp_open("127.0.0.1", int(c["vnc_port"]), 0.4):
+        raise RuntimeError("x11vnc failed to listen on 5901; see /tmp/x11vnc.log")
+
+    # websockify is only useful if it can actually reach the VNC backend.
+    novnc_url = f"http://127.0.0.1:{c['novnc_port']}/vnc.html"
+    if not probe(novnc_url, 0.6)[0]:
+        kill_matching("websockify --web=/usr/share/novnc")
+        time.sleep(0.2)
+        detached(
+            ["websockify", "--web=/usr/share/novnc", f"127.0.0.1:{c['novnc_port']}",
+             f"127.0.0.1:{c['vnc_port']}"],
+            Path("/tmp/novnc.log"),
+            env=env,
+        )
+        for _ in range(20):
+            if probe(novnc_url, 0.4)[0]:
+                break
+            time.sleep(0.1)
+
+    if not probe(novnc_url, 0.8)[0]:
+        raise RuntimeError("noVNC failed to listen on 6080; see /tmp/novnc.log")
 
 def ensure_qq(c: dict[str, Any]) -> None:
     if running("/opt/QQ/qq"):
@@ -309,6 +373,7 @@ def cmd_recover(_: argparse.Namespace) -> int:
     c = config()
     print("[1/5] X11/noVNC")
     ensure_x_stack(c)
+    print("      VNC backend: online")
     print("[2/5] QQ/NapCat")
     ensure_qq(c)
     time.sleep(3)
